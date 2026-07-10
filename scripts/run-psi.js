@@ -53,7 +53,18 @@ function parseCSV(text) {
   return rows.filter(r => r.length > 1).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] || '').trim()])));
 }
 const csvEscape = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-const slug = s => (s || 'lead').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40);
+const slugBase = s => (s || 'lead').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'lead';
+/* Two brands can slug identically ("The Black Tux" / "The Black-Tux"), which would
+   silently overwrite one another's JSON. Keep a registry and suffix duplicates. */
+const _slugSeen = new Set();
+function uniqueSlug(name) {
+  const base = slugBase(name);
+  if (!_slugSeen.has(base)) { _slugSeen.add(base); return base; }
+  for (let i = 2; ; i++) {
+    const cand = `${base}_${i}`;
+    if (!_slugSeen.has(cand)) { _slugSeen.add(cand); return cand; }
+  }
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ---------- PSI ---------- */
@@ -62,16 +73,19 @@ const psiUrl = u => 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed?
   '&category=best-practices&category=seo&key=' + KEY;
 
 async function runPSI(url) {
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  /* The slowest stores are the best prospects — and the most likely to time out.
+     180s + 4 attempts keeps them in the pipeline instead of silently dropping them. */
+  const ATTEMPTS = 4, TIMEOUT_MS = 180000;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(psiUrl(url), { signal: AbortSignal.timeout(120000) });
+      const res = await fetch(psiUrl(url), { signal: AbortSignal.timeout(TIMEOUT_MS) });
       const j = await res.json();
       if (j.error) throw new Error(j.error.message);
       if (!j.lighthouseResult) throw new Error('no lighthouseResult');
       return j.lighthouseResult;
     } catch (e) {
-      console.log(`    attempt ${attempt} failed: ${e.message}`);
-      if (attempt < 3) await sleep(10000 * attempt);
+      console.log(`    attempt ${attempt}/${ATTEMPTS} failed: ${e.message}`);
+      if (attempt < ATTEMPTS) await sleep(8000 * attempt);
     }
   }
   return null;
@@ -105,6 +119,11 @@ const COLS = ['Company', 'Website', 'Mobile Score', 'Accessibility', 'Best Pract
     console.log(`Found ${existing.length} existing rows — appending.`);
   }
   const done = new Set(existing.map(r => r.Website));
+  // reserve slugs already used by previous runs so we never clobber their JSON
+  for (const r of existing) {
+    const f = (r['LHR File'] || '').split('/').pop().replace(/\.json$/, '');
+    if (f) _slugSeen.add(f);
+  }
   const out = [...existing];
 
   const write = () => {
@@ -129,7 +148,7 @@ const COLS = ['Company', 'Website', 'Mobile Score', 'Accessibility', 'Best Pract
 
     const r = buildEngine(lhr, lead.Technologies || '');
     r.domain = url.replace(/https?:\/\/(www\.)?/, '').replace(/\/.*/, '');
-    const file = slug(lead.Company) + '.json';
+    const file = uniqueSlug(lead.Company) + '.json';
     fs.writeFileSync(path.join(JSON_DIR, file), JSON.stringify(lhr));
 
     out.push({
