@@ -7,7 +7,7 @@ on:
       csv:
         description: 'Lead CSV filename inside leads/'
         required: true
-        default: 'Tier1_Diamond_PriorityOutreach.csv'
+        default: 'Diamond Priority Outreach.csv'
       start:
         description: 'Start at row (1 = first lead)'
         required: true
