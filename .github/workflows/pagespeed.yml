@@ -1,6 +1,5 @@
 name: Run PageSpeed Batch
 
-# Click "Run workflow" in the Actions tab — no terminal, ever.
 on:
   workflow_dispatch:
     inputs:
@@ -17,9 +16,6 @@ on:
         required: true
         default: '150'
 
-permissions:
-  contents: write
-
 jobs:
   pagespeed:
     runs-on: ubuntu-latest
@@ -32,7 +28,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Run PageSpeed batch
         env:
@@ -45,17 +41,11 @@ jobs:
             --out "results/psi_results.csv" \
             --json-dir "results/lhr"
 
-      - name: Commit results back to the repo
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add results/
-          git diff --staged --quiet || git commit -m "PSI batch: rows ${{ github.event.inputs.start }}+${{ github.event.inputs.count }}"
-          git push
-
-      - name: Upload results as a downloadable artifact
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: psi-results
-          path: results/
+          name: psi-results-batch-${{ github.event.inputs.start }}
+          path: |
+            results/psi_results.csv
+            results/lhr
           retention-days: 30
