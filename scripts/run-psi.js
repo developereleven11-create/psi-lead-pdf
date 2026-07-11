@@ -75,7 +75,10 @@ const psiUrl = u => 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed?
 async function runPSI(url) {
   /* The slowest stores are the best prospects — and the most likely to time out.
      180s + 4 attempts keeps them in the pipeline instead of silently dropping them. */
-  const ATTEMPTS = 4, TIMEOUT_MS = 180000;
+  /* Cut from 4 attempts to 2. A lead that can't produce an LHR in two 180s tries
+     with an 8s cooldown is either genuinely broken or under a stampede — burning
+     another 32s of runtime on it costs more than it's worth. */
+  const ATTEMPTS = 2, TIMEOUT_MS = 180000;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
       const res = await fetch(psiUrl(url), { signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -85,7 +88,7 @@ async function runPSI(url) {
       return j.lighthouseResult;
     } catch (e) {
       console.log(`    attempt ${attempt}/${ATTEMPTS} failed: ${e.message}`);
-      if (attempt < ATTEMPTS) await sleep(8000 * attempt);
+      if (attempt < ATTEMPTS) await sleep(5000 * attempt);
     }
   }
   return null;
@@ -106,6 +109,16 @@ const COLS = ['Company', 'Website', 'Mobile Score', 'Accessibility', 'Best Pract
   'LCP', 'CLS', 'TBT', 'Speed Index', 'TTFB ms', 'Page Weight', 'Recoverable (s)', 'Top Fix',
   'Largest Image', 'Largest Image KB', 'Render-Blocking', 'Third Parties', 'Heavy Apps',
   'Wedge', 'Email Opener', 'LHR File'];
+
+/* When `timeout 320m` fires in the workflow, we get SIGTERM. Flush whatever's
+   in memory to disk before the process ends so no leads are lost between the last
+   write() call and the interrupt. */
+let flushOnExit = null;
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM — flushing partial results.');
+  if (flushOnExit) flushOnExit();
+  process.exit(0);
+});
 
 (async () => {
   const leads = parseCSV(fs.readFileSync(CSV, 'utf8')).filter(l => (l.Website || '').trim());
@@ -131,6 +144,7 @@ const COLS = ['Company', 'Website', 'Mobile Score', 'Accessibility', 'Best Pract
     for (const r of out) lines.push(COLS.map(c => csvEscape(r[c])).join(','));
     fs.writeFileSync(OUT, lines.join('\n') + '\n');
   };
+  flushOnExit = write;
 
   for (let i = 0; i < batch.length; i++) {
     const lead = batch[i];
