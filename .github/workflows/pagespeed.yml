@@ -6,6 +6,14 @@ on:
       csv:
         description: 'Lead CSV filename inside leads/'
         required: true
+        default: 'Diamond Pname: Run PageSpeed Batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv:
+        description: 'Lead CSV filename inside leads/'
+        required: true
         default: 'Diamond Priority Outreach.csv'
       start:
         description: 'Start at row (1 = first lead)'
@@ -19,7 +27,8 @@ on:
 jobs:
   pagespeed:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    # Absolute ceiling is 360 (6h). Stop earlier so the upload step still runs.
+    timeout-minutes: 340
 
     steps:
       - name: Check out the repo
@@ -33,15 +42,22 @@ jobs:
       - name: Run PageSpeed batch
         env:
           PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
+        # Hard-stop the runner script at 5h 20m so the upload gets its turn.
+        # `timeout 320m` sends SIGTERM at the deadline; the script's writes-as-it-goes
+        # loop means whatever finished before that point is already on disk.
         run: |
-          node scripts/run-psi.js \
+          timeout 320m node scripts/run-psi.js \
             --csv "leads/${{ github.event.inputs.csv }}" \
             --start "${{ github.event.inputs.start }}" \
             --count "${{ github.event.inputs.count }}" \
             --out "results/psi_results.csv" \
-            --json-dir "results/lhr"
+            --json-dir "results/lhr" || echo "Batch stopped early — uploading what completed."
 
+      # The critical fix. Without `if: always()` a cancelled or failed step skips
+      # every downstream step, including this one — which is why the last run lost
+      # 307 finished results.
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: psi-results-batch-${{ github.event.inputs.start }}
@@ -49,3 +65,60 @@ jobs:
             results/psi_results.csv
             results/lhr
           retention-days: 30
+          # Don't fail the whole job if the results dir is empty (e.g. the runner
+          # died in setup). Skips silently instead.
+          if-no-files-found: warn
+riority Outreach.csv'
+      start:
+        description: 'Start at row (1 = first lead)'
+        required: true
+        default: '1'
+      count:
+        description: 'How many leads to test this run'
+        required: true
+        default: '150'
+
+jobs:
+  pagespeed:
+    runs-on: ubuntu-latest
+    # Absolute ceiling is 360 (6h). Stop earlier so the upload step still runs.
+    timeout-minutes: 340
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run PageSpeed batch
+        env:
+          PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
+        # Hard-stop the runner script at 5h 20m so the upload gets its turn.
+        # `timeout 320m` sends SIGTERM at the deadline; the script's writes-as-it-goes
+        # loop means whatever finished before that point is already on disk.
+        run: |
+          timeout 320m node scripts/run-psi.js \
+            --csv "leads/${{ github.event.inputs.csv }}" \
+            --start "${{ github.event.inputs.start }}" \
+            --count "${{ github.event.inputs.count }}" \
+            --out "results/psi_results.csv" \
+            --json-dir "results/lhr" || echo "Batch stopped early — uploading what completed."
+
+      # The critical fix. Without `if: always()` a cancelled or failed step skips
+      # every downstream step, including this one — which is why the last run lost
+      # 307 finished results.
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: psi-results-batch-${{ github.event.inputs.start }}
+          path: |
+            results/psi_results.csv
+            results/lhr
+          retention-days: 30
+          # Don't fail the whole job if the results dir is empty (e.g. the runner
+          # died in setup). Skips silently instead.
+          if-no-files-found: warn
